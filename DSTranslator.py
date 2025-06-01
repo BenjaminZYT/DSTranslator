@@ -174,80 +174,68 @@ def create_docx_from_markdown(markdown_text):
     document.save(bio)
     return bio.getvalue()
 
-def create_pdf_from_text(text_content):
-    """
-    Creates a basic PDF from plain text content using PyMuPDF.
-    NOTE: This will NOT render Markdown tables as actual PDF tables.
-    They will appear as plain text (e.g., | Cell 1 | Cell 2 |).
-    Complex layouts and non-Latin characters might require font embedding.
-    """
+def create_pdf_from_text(text_content, output_filename="output.pdf"):
     doc = fitz.open()
+
+    # --- IMPORTANT: Configure Font for CJK/Unicode ---
+    # Define the path to your chosen Unicode font file.
+    # Example: NotoSansSC-Regular.ttf for Simplified Chinese
+    # Make sure this file is in your project directory when deployed!
+    unicode_font_path = "NotoSansSC-Regular.ttf" # <--- CHANGE THIS TO YOUR FONT FILE
+    unicode_font_name = "NotoSansSC" # <--- NAME FOR YOUR FONT
+
+    font_name_for_insertion = "helv" # Default fallback
+
+    # Check if the font file exists and try to embed it
+    if os.path.exists(unicode_font_path):
+        try:
+            # `set_simple=True` is often crucial for CJK fonts in PyMuPDF
+            doc.insert_font(fontname=unicode_font_name, fontfile=unicode_font_path, set_simple=True)
+            font_name_for_insertion = unicode_font_name # Use the loaded font
+        except Exception as e:
+            st.warning(f"Could not load custom font '{unicode_font_path}' for PDF: {e}. "
+                       "Using default font. Unicode characters might not display correctly.")
+    else:
+        st.warning(f"Custom font file '{unicode_font_path}' not found. Using default font. "
+                   "Unicode characters might not display correctly.")
+    # --- End Font Configuration ---
+
     page = doc.new_page()
-    
+
     # Define text settings
-    font_name = "helv" # Helvetica, a common font in PyMuPDF
     font_size = 10
     line_height = 12
     margin = 50
-    
-    # Get page dimensions
+
     page_width = page.rect.width
     page_height = page.rect.height
-    
-    # Calculate available text area
-    text_area_width = page_width - 2 * margin
-    cursor_y = page_height - margin # Start from top margin
-
-    # A simple regex to detect potential markdown table lines
-    # This is for display purposes only, not for rendering a true table.
-    markdown_table_line_regex = re.compile(r'^\s*\|.*\|')
+    cursor_y = page_height - margin
 
     for line in text_content.split('\n'):
-        # If the line is empty, just move to the next line
         if not line.strip():
             cursor_y -= line_height
-            if cursor_y < margin: # New page if content goes beyond bottom margin
+            if cursor_y < margin:
                 page = doc.new_page()
                 cursor_y = page_height - margin
             continue
-            
-        # Attempt to draw the line
-        try:
-            # Insert text, handling wrapping.
-            # Using insert_textbox is better for wrapping than insert_text
-            text_rect = fitz.Rect(margin, cursor_y - line_height, page_width - margin, cursor_y)
-            
-            # Check if it looks like a markdown table line
-            if markdown_table_line_regex.match(line):
-                # For table lines, we might want slightly different styling or just raw text
-                # We'll just draw it as regular text for simplicity, without table structure
-                pass
 
-            # This loop manually handles line breaks and pagination
-            # A more robust solution might use text_as_markdown property or a more advanced library
-            text_instance = page.insert_textbox(
-                text_rect,
-                line,
-                fontname=font_name,
-                fontsize=font_size,
-                align=fitz.TEXT_ALIGN_LEFT,
-                render_mode=0, # fill mode
-                # For non-Latin languages, you *must* embed fonts.
-                # Example for Chinese: fontfile="path/to/your/chinese_font.ttf"
-            )
-            
-            # Move cursor down based on actual text height (if it wrapped)
-            cursor_y = text_instance.y1 # The bottom of the inserted text box
-            
-            # If text flowed past the bottom margin, add new page
-            if cursor_y < margin:
-                page = doc.new_page()
-                cursor_y = page_height - margin # Reset cursor for new page
-                
-        except Exception as e:
-            st.warning(f"Could not render line in PDF: '{line[:50]}...' - Error: {e}")
-            # Fallback to simple new line
-            cursor_y -= line_height
+        text_rect = fitz.Rect(margin, cursor_y - line_height, page_width - margin, cursor_y)
+
+        # This line will now use the embedded font if successful
+        text_instance = page.insert_textbox(
+            text_rect,
+            line,
+            fontname=font_name_for_insertion, # Use the chosen font name
+            fontsize=font_size,
+            align=fitz.TEXT_ALIGN_LEFT,
+            render_mode=0
+        )
+
+        cursor_y = text_instance.y1
+
+        if cursor_y < margin:
+            page = doc.new_page()
+            cursor_y = page_height - margin
 
     pdf_bytes = doc.tobytes()
     doc.close()
